@@ -1,4 +1,11 @@
 # app.py
+try:
+    import pydeck
+    import geopandas
+    GEOSPATIAL_ENABLED = True
+except ImportError:
+    GEOSPATIAL_ENABLED = False
+    st.warning("Some geospatial features disabled due to missing dependencies")
 import streamlit as st
 import pandas as pd
 import numpy as np
