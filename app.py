@@ -4,49 +4,87 @@ import numpy as np
 from tensorflow.keras.models import load_model
 import os
 
-# Hide TensorFlow logs
+# Hide TF logs and force CPU
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-# Load model
-model = load_model("best_cnn_model.h5")
+# Streamlit page config
+st.set_page_config(
+    page_title="Cropland Classifier 🌾",
+    page_icon="🌾",
+    layout="centered"
+)
 
-# App title
-st.set_page_config(page_title="Cropland Classifier", layout="centered")
+# Inject background CSS
+st.markdown("""
+    <style>
+    .stApp {
+        background-image: url('https://images.unsplash.com/photo-1619026186627-1f9f2b3d066d');
+        background-size: cover;
+        background-attachment: fixed;
+        color: #333;
+    }
+    .block-container {
+        background-color: rgba(255, 255, 255, 0.90);
+        padding: 2rem;
+        border-radius: 1.5rem;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# App title and logo
+st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/UN_Logo.svg/320px-UN_Logo.svg.png", width=100)
 st.title("🌾 Cropland Mapping Classifier")
 st.markdown("""
-This AI model helps identify cropland in dry regions (Fergana & Orenburg) using satellite data.
+Welcome to the Cropland Classifier!  
+This tool uses a trained AI model to classify **cropland vs non-cropland** based on satellite time-series data.
 
-📂 Upload your **test CSV file** with time-series imagery features to get cropland predictions.
+### 📥 Instructions:
+- Upload a `.csv` file with an **ID** column and feature columns.
+- The model will predict whether each row is cropland (`1`) or not (`0`).
+- Download a ready-to-submit `submission.csv`.
 
+---
 """)
 
-# Upload CSV
-uploaded_file = st.file_uploader("Upload your .csv test file", type="csv")
+# Load the trained model
+@st.cache_resource
+def load_trained_model():
+    return load_model("best_cnn_model.h5")
 
-if uploaded_file is not None:
+model = load_trained_model()
+
+# Upload section
+uploaded_file = st.file_uploader("Upload your test CSV", type="csv")
+
+if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
 
         if "ID" not in df.columns:
-            st.error("⚠️ CSV must contain an 'ID' column.")
+            st.error("❌ Your CSV must include an 'ID' column.")
         else:
+            # Run prediction
             features = df.drop(columns=["ID"])
-            predictions = model.predict(features)
-            predicted_classes = np.argmax(predictions, axis=1)
+            preds = model.predict(features)
+            predicted_classes = np.argmax(preds, axis=1)
 
+            # Format output
             output = pd.DataFrame({
                 "ID": df["ID"],
                 "Target": predicted_classes
             })
 
-            st.success("✅ Prediction completed!")
+            st.success("✅ Prediction complete!")
             st.dataframe(output.head())
 
-            # Download link
+            # Download button
             csv = output.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Download Submission CSV", csv, "submission.csv", "text/csv")
+            st.download_button("📥 Download submission.csv", csv, "submission.csv", "text/csv")
+
     except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
+        st.error(f"❌ Failed to process file: {e}")
 else:
-    st.info("Please upload a CSV file to begin.")
+    st.info("Please upload a test CSV file to begin.")
+
 
