@@ -195,8 +195,8 @@ All datasets and code used in this challenge are covered under the CC-BY 1.0 Lic
 Team Name: AI MOGULS
 Members:
 
-- [Brian Ouko](https://github.com/WellBrian)
-- [Mmabath Naseba](https://github.com/Mmabatho)
-- [Holuwercheyy Hisserhah](https://github.com/holuwercheyy)
-- [Letshego Sephiri](https://github.com/CaramelF)
-- [Christopher Obegi](https://github.com/mechriz)
+- (https://github.com/WellBrian)
+- (https://github.com/Mmabatho)
+- (https://github.com/holuwercheyy)
+- (https://github.com/CaramelF)
+- (https://github.com/mechriz)
