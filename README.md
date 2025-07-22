@@ -193,8 +193,8 @@ All datasets and code used in this challenge are covered under the CC-BY 1.0 Lic
 
 👥 Team
 Team Name: AI MOGULS
+Members:
 
-## ✍️ Contributors
 - [Brian Ouko](https://github.com/WellBrian)
 - [Mmabath Naseba](https://github.com/Mmabatho)
 - [Holuwercheyy Hisserhah](https://github.com/holuwercheyy)
