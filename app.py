@@ -2,53 +2,51 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from tensorflow.keras.models import load_model
+import os
 
-# Load the trained model
+# Hide TensorFlow logs
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+# Load model
 model = load_model("best_cnn_model.h5")
 
-# Page config
-st.set_page_config(page_title="Cropland Mapping AI", layout="centered")
+# App title
+st.set_page_config(page_title="Cropland Classifier", layout="centered")
+st.title("🌾 Cropland Mapping Classifier")
+st.markdown("""
+This AI model helps identify cropland in dry regions (Fergana & Orenburg) using satellite data.
 
-st.title("🌾 Cropland Mapping in Dry Regions")
-st.write("Upload a preprocessed CSV file and get cropland predictions (0 = non-cropland, 1 = cropland).")
+📂 Upload your **test CSV file** with time-series imagery features to get cropland predictions.
 
-# File uploader
-uploaded_file = st.file_uploader("Upload your feature CSV file", type=["csv"])
+""")
+
+# Upload CSV
+uploaded_file = st.file_uploader("Upload your .csv test file", type="csv")
 
 if uploaded_file is not None:
     try:
-        # Load uploaded CSV
-        data = pd.read_csv(uploaded_file)
+        df = pd.read_csv(uploaded_file)
 
-        # Assume first column is ID (optional, remove if not needed)
-        if 'ID' in data.columns:
-            ids = data['ID']
-            X = data.drop(columns=['ID'])
+        if "ID" not in df.columns:
+            st.error("⚠️ CSV must contain an 'ID' column.")
         else:
-            ids = [f"ID_{i}" for i in range(len(data))]
-            X = data
+            features = df.drop(columns=["ID"])
+            predictions = model.predict(features)
+            predicted_classes = np.argmax(predictions, axis=1)
 
-        # Reshape for Conv1D input: (samples, timesteps, features)
-        X_reshaped = np.expand_dims(X, axis=2) if len(X.shape) == 2 else X
+            output = pd.DataFrame({
+                "ID": df["ID"],
+                "Target": predicted_classes
+            })
 
-        # Make predictions
-        predictions = model.predict(X_reshaped)
-        binary_preds = (predictions > 0.5).astype(int).flatten()
+            st.success("✅ Prediction completed!")
+            st.dataframe(output.head())
 
-        # Create submission file
-        submission_df = pd.DataFrame({
-            "ID": ids,
-            "Target": binary_preds
-        })
-
-        st.subheader("🧾 Predictions Preview")
-        st.dataframe(submission_df.head())
-
-        # Download button
-        csv = submission_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download Submission CSV", csv, "submission.csv", "text/csv")
-
+            # Download link
+            csv = output.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Download Submission CSV", csv, "submission.csv", "text/csv")
     except Exception as e:
-        st.error(f"Something went wrong while processing the file: {e}")
+        st.error(f"❌ Error reading file: {e}")
 else:
-    st.info("Please upload a valid CSV file.")
+    st.info("Please upload a CSV file to begin.")
+
