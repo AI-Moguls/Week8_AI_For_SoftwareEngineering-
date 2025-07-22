@@ -14,23 +14,26 @@ st.set_page_config(
     layout="centered"
 )
 
-# Inject background CSS
+# Inject working custom CSS
 st.markdown("""
     <style>
-    .stApp {
-        background-image: url('https://images.unsplash.com/photo-1619026186627-1f9f2b3d066d');
+    [data-testid="stAppViewContainer"] {
+        background-image: url("https://images.unsplash.com/photo-1619026186627-1f9f2b3d066d");
         background-size: cover;
         background-attachment: fixed;
-        color: #333;
+    }
+    [data-testid="stHeader"] {
+        background-color: rgba(0,0,0,0);
     }
     .block-container {
         background-color: rgba(255, 255, 255, 0.90);
-        padding: 2rem;
-        border-radius: 1.5rem;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        padding: 2rem 2rem;
+        border-radius: 1rem;
+        box-shadow: 0 0 20px rgba(0,0,0,0.1);
     }
     </style>
 """, unsafe_allow_html=True)
+
 
 # App title and logo
 st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/UN_Logo.svg/320px-UN_Logo.svg.png", width=100)
