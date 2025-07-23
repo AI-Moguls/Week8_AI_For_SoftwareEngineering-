@@ -26,9 +26,9 @@ def calculate_vegetation_indices(df):
 def main():
     st.set_page_config(page_title="Cropland Classifier", layout="wide")
     
-    # Sidebar
+     # Sidebar - FIXED: Added proper label to radio button
     st.sidebar.title("Navigation")
-    app_mode = st.sidebar.radio("", ["Home", "Classify", "About"])
+    app_mode = st.sidebar.radio("Select Page", ["Home", "Classify", "About"], label_visibility="collapsed")
     
     # Load model
     model = load_model()
