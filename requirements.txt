@@ -364,3 +364,9 @@ xml-python==0.4.3
 yarl==1.20.0
 zipp==3.21.0
 zopfli==0.2.3.post1
+scikit-learn==1.6.1
+imbalanced-learn
+category-encoders
+numpy==1.26.4
+pandas
+scipy
