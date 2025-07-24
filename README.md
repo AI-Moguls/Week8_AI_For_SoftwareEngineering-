@@ -174,7 +174,12 @@ The project includes comprehensive visualization and analysis:
 
 ## Contributing
 
-This project is part of the AI-Moguls Week 8 AI for Software Engineering challenge. Contributions and improvements are welcome.
+This project is part of the AI-Moguls Week 8 AI for Software Engineering challenge. Contributions are as follows:
+- [Brian Ouko](https://github.com/WellBrian)
+- [Mmabath Naseba](https://github.com/Mmabatho)
+- [Holuwercheyy Hisserhah](https://github.com/holuwercheyy)
+- [Letshego Sephiri](https://github.com/CaramelF)
+- [Christopher Obegi](https://github.com/mechriz)
 
 ## License
 
