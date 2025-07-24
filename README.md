@@ -172,6 +172,11 @@ The project includes comprehensive visualization and analysis:
 - Scikit-learn for preprocessing and evaluation
 - Sufficient computational resources for CNN training
 
+
+## Pitch Deck
+ Please use the link below to access our pitch deck:
+ https://gamma.app/docs/GeoAI-Challenge-Cropland-Mapping-qcvvga4s9gwiqo9
+
 ## Contributing
 
 This project is part of the AI-Moguls Week 8 AI for Software Engineering challenge. Contributions are as follows:
