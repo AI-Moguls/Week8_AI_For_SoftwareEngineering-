@@ -2,12 +2,43 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-import sys
-import io
+import requests
+import os
 from datetime import datetime
+from io import StringIO
 
 # MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(page_title="Cropland Classifier", layout="wide")
+
+# Custom CSS to override upload limit text
+st.markdown("""
+<style>
+/* Hide default 200MB text */
+.st-emotion-cache-1gulkj5, 
+.st-emotion-cache-7ym5gk, 
+.uploadedFile { 
+    display: none !important; 
+}
+
+/* Style for our custom message */
+.custom-upload-limit {
+    font-size: 0.8rem;
+    color: #6c757d;
+    margin-top: -15px;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+/* Style for URL input */
+.url-input {
+    width: 100%;
+    padding: 8px;
+    margin-top: 5px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Load the trained model
 @st.cache_resource
@@ -17,6 +48,42 @@ def load_model():
     except Exception as e:
         st.error(f"Error loading model: {e}")
         st.error("Please make sure 'random_forest_cropland.pkl' is in the same directory")
+        return None
+
+# Download file from URL
+def download_from_url(url, max_size=2*1024*1024*1024):
+    try:
+        # Get file size from headers
+        response = requests.head(url)
+        file_size = int(response.headers.get('Content-Length', 0))
+        
+        if file_size > max_size:
+            st.error(f"File size exceeds 2GB limit ({file_size/(1024**3):.2f} GB)")
+            return None
+            
+        # Download with progress
+        st.info(f"Downloading file from URL... (Size: {file_size/(1024**2):.2f} MB)")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        response = requests.get(url, stream=True)
+        content = bytearray()
+        downloaded = 0
+        
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                content.extend(chunk)
+                downloaded += len(chunk)
+                progress = min(downloaded / file_size, 1.0)
+                progress_bar.progress(progress)
+                status_text.text(f"Downloaded: {downloaded/(1024**2):.2f} MB / {file_size/(1024**2):.2f} MB")
+        
+        progress_bar.empty()
+        status_text.empty()
+        st.success("Download complete!")
+        return content
+    except Exception as e:
+        st.error(f"Error downloading file: {e}")
         return None
 
 # Extract vital information from Sentinel-2 data
@@ -84,7 +151,7 @@ def main():
         st.markdown("""
         <div style="background-color:#e8f5e9;padding:20px;border-radius:10px">
             <h2 style="color:#2e7d32">🌱 Satellite-based Agricultural Analysis</h2>
-            <p>Upload Sentinel-1 and Sentinel-2 data separately to classify cropland types</p>
+            <p>Upload Sentinel-1 and Sentinel-2 data or provide direct URLs to classify cropland types</p>
         </div>
         <br>
         """, unsafe_allow_html=True)
@@ -96,7 +163,9 @@ def main():
         
         ### How to use:
         1. Go to the **Classify** page
-        2. Upload separate CSV files for Sentinel-1 and Sentinel-2 data
+        2. For each dataset, choose to either:
+           - Upload a CSV file (max 2GB)
+           - Provide a direct download URL
         3. View predictions and download results
         
         #### Required CSV columns:
@@ -110,36 +179,99 @@ def main():
         
     elif app_mode == "Classify":
         st.title("📊 Multi-Sensor Data Classification")
+        st.info("💡 You can upload files directly or provide URLs to large files hosted elsewhere", icon="ℹ️")
         
         # Create two columns for separate uploaders
         col1, col2 = st.columns(2)
         
+        # Initialize session state
+        if 's2_data' not in st.session_state:
+            st.session_state.s2_data = None
+        if 's1_data' not in st.session_state:
+            st.session_state.s1_data = None
+        
         with col1:
             st.subheader("Sentinel-2 Data (Optical)")
-            sentinel2_file = st.file_uploader("Upload Sentinel-2 CSV", type="csv", key="s2")
+            s2_option = st.radio("Choose input method:", ["Upload File", "Provide URL"], key="s2_option")
             
+            if s2_option == "Upload File":
+                sentinel2_file = st.file_uploader("Upload Sentinel-2 CSV", type="csv", key="s2_upload")
+                st.markdown('<p class="custom-upload-limit">Max file size: 2GB</p>', unsafe_allow_html=True)
+                
+                if sentinel2_file:
+                    # Check file size
+                    if sentinel2_file.size > 2 * 1024 * 1024 * 1024:
+                        st.error("File size exceeds 2GB limit")
+                        st.session_state.s2_data = None
+                    else:
+                        try:
+                            st.session_state.s2_data = pd.read_csv(sentinel2_file)
+                            st.success("Sentinel-2 data loaded successfully!")
+                        except Exception as e:
+                            st.error(f"Error reading Sentinel-2 CSV: {e}")
+                            st.session_state.s2_data = None
+            else:
+                s2_url = st.text_input("Enter direct download URL for Sentinel-2 CSV:", key="s2_url", 
+                                      placeholder="https://example.com/sentinel2.csv")
+                if st.button("Load from URL", key="s2_load"):
+                    if s2_url:
+                        content = download_from_url(s2_url)
+                        if content:
+                            try:
+                                # Convert bytes to string and read CSV
+                                csv_string = StringIO(content.decode('utf-8'))
+                                st.session_state.s2_data = pd.read_csv(csv_string)
+                                st.success("Sentinel-2 data loaded from URL!")
+                            except Exception as e:
+                                st.error(f"Error processing downloaded file: {e}")
+                                st.session_state.s2_data = None
+                    else:
+                        st.warning("Please enter a valid URL")
+        
         with col2:
             st.subheader("Sentinel-1 Data (SAR)")
-            sentinel1_file = st.file_uploader("Upload Sentinel-1 CSV", type="csv", key="s1")
+            s1_option = st.radio("Choose input method:", ["Upload File", "Provide URL"], key="s1_option")
+            
+            if s1_option == "Upload File":
+                sentinel1_file = st.file_uploader("Upload Sentinel-1 CSV", type="csv", key="s1_upload")
+                st.markdown('<p class="custom-upload-limit">Max file size: 2GB</p>', unsafe_allow_html=True)
+                
+                if sentinel1_file:
+                    # Check file size
+                    if sentinel1_file.size > 2 * 1024 * 1024 * 1024:
+                        st.error("File size exceeds 2GB limit")
+                        st.session_state.s1_data = None
+                    else:
+                        try:
+                            st.session_state.s1_data = pd.read_csv(sentinel1_file)
+                            st.success("Sentinel-1 data loaded successfully!")
+                        except Exception as e:
+                            st.error(f"Error reading Sentinel-1 CSV: {e}")
+                            st.session_state.s1_data = None
+            else:
+                s1_url = st.text_input("Enter direct download URL for Sentinel-1 CSV:", key="s1_url", 
+                                      placeholder="https://example.com/sentinel1.csv")
+                if st.button("Load from URL", key="s1_load"):
+                    if s1_url:
+                        content = download_from_url(s1_url)
+                        if content:
+                            try:
+                                # Convert bytes to string and read CSV
+                                csv_string = StringIO(content.decode('utf-8'))
+                                st.session_state.s1_data = pd.read_csv(csv_string)
+                                st.success("Sentinel-1 data loaded from URL!")
+                            except Exception as e:
+                                st.error(f"Error processing downloaded file: {e}")
+                                st.session_state.s1_data = None
+                    else:
+                        st.warning("Please enter a valid URL")
         
-        # Check if both files are uploaded
-        if sentinel2_file and sentinel1_file:
+        # Check if both datasets are loaded
+        if st.session_state.s2_data is not None and st.session_state.s1_data is not None:
             try:
-                # Check file sizes
-                max_size = 2 * 1024 * 1024 * 1024  # 2GB
-                if sentinel2_file.size > max_size or sentinel1_file.size > max_size:
-                    st.error("File size exceeds 2GB limit. Please upload smaller files.")
-                    return
-                
-                # Read and process Sentinel-2 data
-                s2_df = pd.read_csv(sentinel2_file)
-                st.success(f"Sentinel-2: {s2_df.shape[0]} records")
-                s2_processed = process_sentinel2(s2_df)
-                
-                # Read and process Sentinel-1 data
-                s1_df = pd.read_csv(sentinel1_file)
-                st.success(f"Sentinel-1: {s1_df.shape[0]} records")
-                s1_processed = process_sentinel1(s1_df)
+                # Process data
+                s2_processed = process_sentinel2(st.session_state.s2_data)
+                s1_processed = process_sentinel1(st.session_state.s1_data)
                 
                 # Check if processing succeeded
                 if s2_processed is None or s1_processed is None:
@@ -207,33 +339,31 @@ def main():
             except Exception as e:
                 st.error(f"❌ Error processing files: {e}")
                 st.error("Please check the CSV formats and try again")
-        elif sentinel2_file or sentinel1_file:
-            st.warning("⚠️ Please upload both Sentinel-1 and Sentinel-2 datasets")
+        elif st.session_state.s2_data is not None or st.session_state.s1_data is not None:
+            st.warning("⚠️ Please load both Sentinel-1 and Sentinel-2 datasets")
             
     elif app_mode == "About":
         st.title("ℹ️ About")
         st.markdown("""
         ### Multi-Sensor Cropland Classification System
         
-        **New Feature: Separate Data Upload**
-        - Upload Sentinel-1 (SAR) and Sentinel-2 (optical) data separately
-        - Intelligent feature extraction:
-          - Sentinel-2: Calculates 6 vegetation indices (NDVI, NDWI, EVI, NDMI, NDVIre, NBR)
-          - Sentinel-1: Calculates polarization ratios (VV/VH, VH/VV)
-        - Automatic merging on ID column
+        **New Feature: Flexible Data Input**
+        - Upload CSV files directly (max 2GB)
+        - Provide URLs to large files hosted elsewhere
+        - Direct download capability with progress tracking
         
         **Technical Specifications:**
         - Model: Random Forest (100 estimators)
         - Features: 6 vegetation indices + 4 SAR features
         - Processing: Automatic handling of missing values
+        - Memory Management: Optimized for large datasets
         
-        **Data Processing Workflow:**
-        1. Upload separate CSV files for each satellite
-        2. System extracts essential features:
-           - Optical → Vegetation indices
-           - SAR → Polarization values and ratios
-        3. Datasets merged using location ID
-        4. Machine learning model makes predictions
+        **Data Input Options:**
+        - **Direct Upload**: Best for files under 2GB
+        - **URL Download**: Ideal for large files hosted on:
+          - Cloud storage (AWS S3, Google Cloud Storage)
+          - Institutional servers
+          - Public data repositories
         
         Developed for precision agriculture applications using multi-sensor fusion.
         """, unsafe_allow_html=True)
