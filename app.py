@@ -3,9 +3,13 @@ import pandas as pd
 import numpy as np
 import joblib
 import requests
+import re
 import os
+import tempfile
+import chardet
+import csv
 from datetime import datetime
-from io import StringIO
+from io import StringIO, BytesIO
 
 # MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(page_title="Cropland Classifier", layout="wide")
@@ -37,6 +41,24 @@ st.markdown("""
     border: 1px solid #ccc;
     border-radius: 4px;
 }
+
+/* Warning boxes */
+.warning-box {
+    background-color: #fff3cd;
+    border-left: 4px solid #ffc107;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+/* Error boxes */
+.error-box {
+    background-color: #f8d7da;
+    border-left: 4px solid #dc3545;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,23 +72,63 @@ def load_model():
         st.error("Please make sure 'random_forest_cropland.pkl' is in the same directory")
         return None
 
-# Download file from URL
+# ==============================
+# IMPROVED DOWNLOAD HANDLER
+# ==============================
 def download_from_url(url, max_size=2*1024*1024*1024):
+    """Download file from any source with special handling for cloud storage"""
     try:
-        # Get file size from headers
-        response = requests.head(url)
+        # Handle Google Drive URLs
+        if "drive.google.com" in url:
+            pattern = r'https://drive\.google\.com/file/d/([a-zA-Z0-9_-]+)/.*'
+            match = re.match(pattern, url)
+            if match:
+                file_id = match.group(1)
+                url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        
+        # Handle Dropbox URLs
+        if "dropbox.com" in url:
+            if "?dl=0" in url:
+                url = url.replace("?dl=0", "?dl=1")
+        
+        # Handle OneDrive URLs
+        if "onedrive.live.com" in url or "1drv.ms" in url:
+            if "1drv.ms" in url:
+                url = requests.head(url, allow_redirects=True).url
+            if "?resid=" in url and "!download" not in url:
+                url = url.split('?')[0] + "?download=1"
+        
+        # Create session to handle redirects
+        session = requests.Session()
+        response = session.head(url, allow_redirects=True)
+        
+        # Get final URL after redirects
+        final_url = response.url
+        
+        # Get file size
         file_size = int(response.headers.get('Content-Length', 0))
         
+        # Handle unknown file size
+        if file_size == 0:
+            st.warning("Could not determine file size. Downloading anyway...")
+            response = session.get(url, stream=True)
+            content = bytearray()
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    content.extend(chunk)
+            return content
+        
+        # Check file size limit
         if file_size > max_size:
             st.error(f"File size exceeds 2GB limit ({file_size/(1024**3):.2f} GB)")
             return None
-            
+        
         # Download with progress
         st.info(f"Downloading file from URL... (Size: {file_size/(1024**2):.2f} MB)")
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        response = requests.get(url, stream=True)
+        response = session.get(url, stream=True)
         content = bytearray()
         downloaded = 0
         
@@ -83,14 +145,102 @@ def download_from_url(url, max_size=2*1024*1024*1024):
         st.success("Download complete!")
         return content
     except Exception as e:
-        st.error(f"Error downloading file: {e}")
+        st.error(f"Error downloading file: {str(e)}")
         return None
 
-# Extract vital information from Sentinel-2 data
+# ===========================
+# ADVANCED CSV PARSER
+# ===========================
+def robust_read_csv(file_path):
+    """Read CSV with advanced error handling and format detection"""
+    try:
+        # First try standard pandas read
+        try:
+            return pd.read_csv(file_path)
+        except Exception as e:
+            st.warning(f"Standard CSV read failed: {str(e)}. Trying advanced methods...")
+        
+        # Detect encoding
+        with open(file_path, 'rb') as f:
+            rawdata = f.read(10000)
+            encoding = chardet.detect(rawdata)['encoding'] or 'utf-8'
+        
+        # Detect delimiter
+        with open(file_path, 'r', encoding=encoding, errors='replace') as f:
+            first_lines = [f.readline() for _ in range(5)]
+            sniffer = csv.Sniffer()
+            dialect = sniffer.sniff("\n".join(first_lines))
+        
+        # Read with error-tolerant method
+        data = []
+        bad_lines = []
+        total_lines = 0
+        
+        with open(file_path, 'r', encoding=encoding, errors='replace') as f:
+            reader = csv.reader(f, dialect)
+            
+            # Get header
+            try:
+                header = next(reader)
+            except StopIteration:
+                st.error("CSV file is empty")
+                return None
+                
+            # Process rows
+            for i, row in enumerate(reader):
+                total_lines += 1
+                if len(row) != len(header):
+                    bad_lines.append(i+2)  # +1 for header, +1 for 0-index
+                    continue
+                data.append(row)
+        
+        # Create DataFrame
+        df = pd.DataFrame(data, columns=header)
+        
+        # Report issues
+        if bad_lines:
+            st.warning(f"Skipped {len(bad_lines)} malformed lines (rows: {', '.join(map(str, bad_lines[:10]))}{'...' if len(bad_lines) > 10 else ''})")
+        
+        st.info(f"Successfully read {len(df)} of {total_lines} rows")
+        return df
+        
+    except Exception as e:
+        st.error(f"Advanced CSV reading failed: {str(e)}")
+        return None
+
+# =============================
+# FILE PROCESSING PIPELINE
+# =============================
+def handle_uploaded_file(uploaded_file, file_type):
+    """Process uploaded file with temp storage for large files"""
+    try:
+        # Create temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
+            bytes_data = uploaded_file.read()
+            tmp_file.write(bytes_data)
+            tmp_file_path = tmp_file.name
+        
+        # Process with robust reader
+        df = robust_read_csv(tmp_file_path)
+        
+        # Clean up temp file
+        os.unlink(tmp_file_path)
+        
+        return df
+    except Exception as e:
+        st.error(f"Error processing {file_type} file: {str(e)}")
+        return None
+
+# =============================
+# OPTICAL DATA PROCESSING
+# =============================
 def process_sentinel2(df):
     """Process Sentinel-2 data and calculate vegetation indices"""
     eps = 1e-8
     required_bands = ['B2', 'B3', 'B4', 'B5', 'B8', 'B11', 'B12', 'B8A']
+    
+    if df is None:
+        return None
     
     # Check for required bands
     missing_bands = [band for band in required_bands if band not in df.columns]
@@ -113,11 +263,16 @@ def process_sentinel2(df):
     # Return only essential features
     return df[['ID', 'NDVI', 'NDWI', 'EVI', 'NDMI', 'NDVIre', 'NBR']]
 
-# Extract vital information from Sentinel-1 data
+# =============================
+# SAR DATA PROCESSING
+# =============================
 def process_sentinel1(df):
     """Process Sentinel-1 SAR data and calculate ratios"""
     eps = 1e-8
     required_bands = ['VV', 'VH']
+    
+    if df is None:
+        return None
     
     # Check for required bands
     missing_bands = [band for band in required_bands if band not in df.columns]
@@ -136,7 +291,9 @@ def process_sentinel1(df):
     # Return only essential features
     return df[['ID', 'VV', 'VH', 'VV/VH', 'VH/VV']]
 
-# Main app
+# =============================
+# MAIN APP
+# =============================
 def main():
     # Sidebar with accessibility fix
     st.sidebar.title("Navigation")
@@ -164,13 +321,19 @@ def main():
         ### How to use:
         1. Go to the **Classify** page
         2. For each dataset, choose to either:
-           - Upload a CSV file (max 2GB)
+           - Upload a CSV file (max 200MB)
            - Provide a direct download URL
         3. View predictions and download results
         
         #### Required CSV columns:
         - **Sentinel-2**: ID, B2, B3, B4, B5, B8, B11, B12, B8A
         - **Sentinel-1**: ID, VV, VH
+        
+        #### Supported URL Sources:
+        - Google Drive (shared links)
+        - Dropbox (shared links)
+        - OneDrive (shared links)
+        - Any direct download URL
         """)
         
         if st.checkbox("Show data sources diagram"):
@@ -180,6 +343,14 @@ def main():
     elif app_mode == "Classify":
         st.title("📊 Multi-Sensor Data Classification")
         st.info("💡 You can upload files directly or provide URLs to large files hosted elsewhere", icon="ℹ️")
+        
+        # Warning about large files
+        st.markdown("""
+        <div class="warning-box">
+            <strong>Important:</strong> For files over 200MB, use the URL method. 
+            Streamlit limits direct uploads to 200MB, but our URL downloader supports files up to 2GB.
+        </div>
+        """, unsafe_allow_html=True)
         
         # Create two columns for separate uploaders
         col1, col2 = st.columns(2)
@@ -196,35 +367,37 @@ def main():
             
             if s2_option == "Upload File":
                 sentinel2_file = st.file_uploader("Upload Sentinel-2 CSV", type="csv", key="s2_upload")
-                st.markdown('<p class="custom-upload-limit">Max file size: 2GB</p>', unsafe_allow_html=True)
+                st.markdown('<p class="custom-upload-limit">Max file size: 200MB (for direct upload). For larger files use URL method.</p>', unsafe_allow_html=True)
                 
                 if sentinel2_file:
-                    # Check file size
-                    if sentinel2_file.size > 2 * 1024 * 1024 * 1024:
-                        st.error("File size exceeds 2GB limit")
-                        st.session_state.s2_data = None
-                    else:
-                        try:
-                            st.session_state.s2_data = pd.read_csv(sentinel2_file)
-                            st.success("Sentinel-2 data loaded successfully!")
-                        except Exception as e:
-                            st.error(f"Error reading Sentinel-2 CSV: {e}")
-                            st.session_state.s2_data = None
+                    # Process file with memory-efficient method
+                    with st.spinner("Processing Sentinel-2 data..."):
+                        st.session_state.s2_data = handle_uploaded_file(sentinel2_file, "Sentinel-2")
+                    if st.session_state.s2_data is not None:
+                        st.success(f"Loaded {len(st.session_state.s2_data)} rows")
             else:
-                s2_url = st.text_input("Enter direct download URL for Sentinel-2 CSV:", key="s2_url", 
-                                      placeholder="https://example.com/sentinel2.csv")
+                s2_url = st.text_input("Enter URL for Sentinel-2 CSV:", key="s2_url", 
+                                      placeholder="https://drive.google.com/... or https://dropbox.com/...")
                 if st.button("Load from URL", key="s2_load"):
                     if s2_url:
-                        content = download_from_url(s2_url)
+                        with st.spinner("Downloading Sentinel-2 data..."):
+                            content = download_from_url(s2_url)
                         if content:
                             try:
-                                # Convert bytes to string and read CSV
-                                csv_string = StringIO(content.decode('utf-8'))
-                                st.session_state.s2_data = pd.read_csv(csv_string)
-                                st.success("Sentinel-2 data loaded from URL!")
+                                # Save to temp file
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
+                                    tmp_file.write(content)
+                                    tmp_file_path = tmp_file.name
+                                
+                                # Process with robust reader
+                                st.session_state.s2_data = robust_read_csv(tmp_file_path)
+                                if st.session_state.s2_data is not None:
+                                    st.success(f"Loaded {len(st.session_state.s2_data)} rows from URL")
+                                
+                                # Clean up temp file
+                                os.unlink(tmp_file_path)
                             except Exception as e:
                                 st.error(f"Error processing downloaded file: {e}")
-                                st.session_state.s2_data = None
                     else:
                         st.warning("Please enter a valid URL")
         
@@ -234,44 +407,52 @@ def main():
             
             if s1_option == "Upload File":
                 sentinel1_file = st.file_uploader("Upload Sentinel-1 CSV", type="csv", key="s1_upload")
-                st.markdown('<p class="custom-upload-limit">Max file size: 2GB</p>', unsafe_allow_html=True)
+                st.markdown('<p class="custom-upload-limit">Max file size: 200MB (for direct upload). For larger files use URL method.</p>', unsafe_allow_html=True)
                 
                 if sentinel1_file:
-                    # Check file size
-                    if sentinel1_file.size > 2 * 1024 * 1024 * 1024:
-                        st.error("File size exceeds 2GB limit")
-                        st.session_state.s1_data = None
-                    else:
-                        try:
-                            st.session_state.s1_data = pd.read_csv(sentinel1_file)
-                            st.success("Sentinel-1 data loaded successfully!")
-                        except Exception as e:
-                            st.error(f"Error reading Sentinel-1 CSV: {e}")
-                            st.session_state.s1_data = None
+                    # Process file with memory-efficient method
+                    with st.spinner("Processing Sentinel-1 data..."):
+                        st.session_state.s1_data = handle_uploaded_file(sentinel1_file, "Sentinel-1")
+                    if st.session_state.s1_data is not None:
+                        st.success(f"Loaded {len(st.session_state.s1_data)} rows")
             else:
-                s1_url = st.text_input("Enter direct download URL for Sentinel-1 CSV:", key="s1_url", 
-                                      placeholder="https://example.com/sentinel1.csv")
+                s1_url = st.text_input("Enter URL for Sentinel-1 CSV:", key="s1_url", 
+                                      placeholder="https://drive.google.com/... or https://dropbox.com/...")
                 if st.button("Load from URL", key="s1_load"):
                     if s1_url:
-                        content = download_from_url(s1_url)
+                        with st.spinner("Downloading Sentinel-1 data..."):
+                            content = download_from_url(s1_url)
                         if content:
                             try:
-                                # Convert bytes to string and read CSV
-                                csv_string = StringIO(content.decode('utf-8'))
-                                st.session_state.s1_data = pd.read_csv(csv_string)
-                                st.success("Sentinel-1 data loaded from URL!")
+                                # Save to temp file
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
+                                    tmp_file.write(content)
+                                    tmp_file_path = tmp_file.name
+                                
+                                # Process with robust reader
+                                st.session_state.s1_data = robust_read_csv(tmp_file_path)
+                                if st.session_state.s1_data is not None:
+                                    st.success(f"Loaded {len(st.session_state.s1_data)} rows from URL")
+                                
+                                # Clean up temp file
+                                os.unlink(tmp_file_path)
                             except Exception as e:
                                 st.error(f"Error processing downloaded file: {e}")
-                                st.session_state.s1_data = None
                     else:
                         st.warning("Please enter a valid URL")
+        
+        # Classification section
+        st.divider()
+        st.subheader("Classification")
         
         # Check if both datasets are loaded
         if st.session_state.s2_data is not None and st.session_state.s1_data is not None:
             try:
                 # Process data
-                s2_processed = process_sentinel2(st.session_state.s2_data)
-                s1_processed = process_sentinel1(st.session_state.s1_data)
+                with st.spinner("Processing optical data..."):
+                    s2_processed = process_sentinel2(st.session_state.s2_data)
+                with st.spinner("Processing SAR data..."):
+                    s1_processed = process_sentinel1(st.session_state.s1_data)
                 
                 # Check if processing succeeded
                 if s2_processed is None or s1_processed is None:
@@ -279,7 +460,8 @@ def main():
                     return
                 
                 # Merge datasets on ID
-                merged_df = pd.merge(s2_processed, s1_processed, on='ID', how='inner')
+                with st.spinner("Matching IDs..."):
+                    merged_df = pd.merge(s2_processed, s1_processed, on='ID', how='inner')
                 
                 if merged_df.empty:
                     st.error("No matching IDs found between Sentinel-1 and Sentinel-2 datasets")
@@ -311,7 +493,15 @@ def main():
                     
                     # Make predictions
                     with st.spinner("Classifying cropland types..."):
-                        predictions = model.predict(X)
+                        # Process in chunks for large datasets
+                        chunk_size = 10000
+                        predictions = []
+                        
+                        for i in range(0, len(X), chunk_size):
+                            chunk = X[i:i+chunk_size]
+                            chunk_pred = model.predict(chunk)
+                            predictions.extend(chunk_pred)
+                        
                         merged_df['Predicted_Class'] = predictions
                     
                     # Results
@@ -347,23 +537,27 @@ def main():
         st.markdown("""
         ### Multi-Sensor Cropland Classification System
         
-        **New Feature: Flexible Data Input**
-        - Upload CSV files directly (max 2GB)
-        - Provide URLs to large files hosted elsewhere
-        - Direct download capability with progress tracking
+        **Enhanced File Handling:**
+        - Advanced CSV parser with automatic delimiter detection
+        - Malformed row skipping with detailed diagnostics
+        - Character encoding auto-detection
+        - Universal URL support (Google Drive, Dropbox, OneDrive, etc.)
         
         **Technical Specifications:**
         - Model: Random Forest (100 estimators)
         - Features: 6 vegetation indices + 4 SAR features
-        - Processing: Automatic handling of missing values
-        - Memory Management: Optimized for large datasets
+        - Processing: Chunk-based processing for large files
+        - Error Handling: Detailed diagnostics for malformed CSVs
         
-        **Data Input Options:**
-        - **Direct Upload**: Best for files under 2GB
-        - **URL Download**: Ideal for large files hosted on:
-          - Cloud storage (AWS S3, Google Cloud Storage)
-          - Institutional servers
-          - Public data repositories
+        **Supported URL Formats:**
+        - Google Drive: `https://drive.google.com/file/d/...`
+        - Dropbox: `https://www.dropbox.com/s/...?dl=0`
+        - OneDrive: `https://1drv.ms/...` or `https://onedrive.live.com/...`
+        - Direct links: `https://example.com/data.csv`
+        
+        **Direct Upload Limits:**
+        - Max 200MB per file (Streamlit limitation)
+        - Use URL method for larger files (up to 2GB)
         
         Developed for precision agriculture applications using multi-sensor fusion.
         """, unsafe_allow_html=True)
