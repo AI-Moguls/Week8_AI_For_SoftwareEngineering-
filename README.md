@@ -175,6 +175,7 @@ The project includes comprehensive visualization and analysis:
 
 ## Pitch Deck
  Please use the link below to access our pitch deck:
+ 
  https://gamma.app/docs/GeoAI-Challenge-Cropland-Mapping-qcvvga4s9gwiqo9
 
 ## Contributing
