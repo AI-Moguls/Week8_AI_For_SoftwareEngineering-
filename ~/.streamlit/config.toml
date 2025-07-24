@@ -1,0 +1,2 @@
+[server]
+maxUploadSize = 2048  # Size in MB (2048 MB = 2GB)
