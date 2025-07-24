@@ -66,11 +66,16 @@ st.markdown("""
 @st.cache_resource
 def load_model():
     try:
+        # Try to load model from current directory
         return joblib.load('random_forest_cropland.pkl')
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        st.error("Please make sure 'random_forest_cropland.pkl' is in the same directory")
-        return None
+    except FileNotFoundError:
+        try:
+            # Try to load from absolute path
+            return joblib.load('/app/random_forest_cropland.pkl')
+        except Exception as e:
+            st.error(f"Error loading model: {e}")
+            st.error("Please make sure 'random_forest_cropland.pkl' is in the correct directory")
+            return None
 
 # ==============================
 # IMPROVED DOWNLOAD HANDLER
@@ -169,7 +174,10 @@ def robust_read_csv(file_path):
         with open(file_path, 'r', encoding=encoding, errors='replace') as f:
             first_lines = [f.readline() for _ in range(5)]
             sniffer = csv.Sniffer()
-            dialect = sniffer.sniff("\n".join(first_lines))
+            try:
+                dialect = sniffer.sniff("\n".join(first_lines))
+            except:
+                dialect = None
         
         # Read with error-tolerant method
         data = []
@@ -177,7 +185,7 @@ def robust_read_csv(file_path):
         total_lines = 0
         
         with open(file_path, 'r', encoding=encoding, errors='replace') as f:
-            reader = csv.reader(f, dialect)
+            reader = csv.reader(f, dialect) if dialect else csv.reader(f)
             
             # Get header
             try:
@@ -499,8 +507,12 @@ def main():
                         
                         for i in range(0, len(X), chunk_size):
                             chunk = X[i:i+chunk_size]
-                            chunk_pred = model.predict(chunk)
-                            predictions.extend(chunk_pred)
+                            try:
+                                chunk_pred = model.predict(chunk)
+                                predictions.extend(chunk_pred)
+                            except Exception as e:
+                                st.error(f"Prediction error: {e}")
+                                return
                         
                         merged_df['Predicted_Class'] = predictions
                     

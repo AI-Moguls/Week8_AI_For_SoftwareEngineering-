@@ -73,10 +73,10 @@ print("Path to dataset files:", path)
 │   │   └── Orenburg_training_samples.shp
 │   └── Test.csv
 ├── models/
-│   └── best_cnn_model.h5
+│   └── random_forest_cropland.pkl
 ├── outputs/
 │   └── submission.csv
-└── index.ipynb
+└── geoai-cropland.ipynb
 ```
 
 ## Usage
