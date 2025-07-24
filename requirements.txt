@@ -7,3 +7,4 @@ category-encoders==2.6.3
 scipy==1.13.0
 joblib==1.4.2
 Pillow==10.3.0
+charlet==4.0.0
