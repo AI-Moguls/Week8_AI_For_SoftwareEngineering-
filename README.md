@@ -8,170 +8,116 @@ This project uses multi-temporal satellite data to classify cropland vs non-crop
 
 ## Dataset
 
+The dataset used for this project was obtained from **Kaggle**:  
+📂 [GeoAI Challenge for Cropland Mapping (Dry Dataset)](https://www.kaggle.com/datasets/noob786/geoai-challenge-for-cropland-mapping-dry-dataset)
+
+This dataset provides labeled data for cropland mapping tasks, including geospatial features and vegetation indices for cropland classification challenges.
+
+---
 The project uses the "GeoAI Challenge for Cropland Mapping - Dry Dataset" which includes:
 - **Sentinel-1 SAR data**: VH and VV polarization bands
 - **Sentinel-2 optical data**: Multi-spectral bands (B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12)
 - **Training labels**: Ground truth data from Fergana and Orenburg regions
 - **Test data**: Unlabeled samples for prediction
 
-## Installation and Setup
+---
 
-### Required Dependencies
+## 🚀 Table of Contents
 
-```bash
-pip install --upgrade scikit-learn==1.6.1 imbalanced-learn category-encoders numpy==1.26.4 pandas scipy tensorflow keras geopandas matplotlib seaborn pyproj
-```
+- [GeoAI Challenge for Cropland Mapping - Dry Dataset](#geoai-challenge-for-cropland-mapping---dry-dataset)
+  - [Project Overview](#project-overview)
+  - [Dataset](#dataset)
+  - [🚀 Table of Contents](#-table-of-contents)
+  - [Project Overview](#project-overview-1)
+  - [Development Workflow](#development-workflow)
+    - [1. Data Collection \& Preprocessing](#1-data-collection--preprocessing)
+    - [2. Feature Engineering](#2-feature-engineering)
+    - [3. Model Training \& Validation](#3-model-training--validation)
+    - [4. Model Export](#4-model-export)
+    - [5. App Development (Streamlit)](#5-app-development-streamlit)
+  - [Pitch Deck](#pitch-deck)
+  - [Contributing](#contributing)
+  - [License](#license)
 
-### Dataset Download
+---
 
-```python
-import kagglehub
+## Project Overview
 
-# Download latest version
-path = kagglehub.dataset_download("noob786/geoai-challenge-for-cropland-mapping-dry-dataset")
-print("Path to dataset files:", path)
-```
+This project aims to classify satellite imagery pixels as **cropland** or **non-cropland** using vegetation index data and machine learning. The final deliverable is an interactive web app built with **Streamlit**, allowing users to explore predictions interactively.
 
-## Key Features
+---
 
-### 1. Data Processing Pipeline
-- **Multi-source data integration**: Combines Sentinel-1 and Sentinel-2 data
-- **Temporal aggregation**: Uses mean and standard deviation across time series
-- **Coordinate system handling**: Automatic conversion between UTM and WGS84 projections
-- **Spatial matching**: KDTree-based nearest neighbor matching for label assignment
+## Development Workflow
+
+### 1. Data Collection & Preprocessing
+- Download dataset from Kaggle (link above).
+- Load using `pandas` and inspect the structure.
+- Handle missing values, normalize numeric features.
+- Convert categorical attributes into numeric (if any).
 
 ### 2. Feature Engineering
-- **Vegetation indices calculation**:
-  - NDVI (Normalized Difference Vegetation Index)
-  - NDWI (Normalized Difference Water Index)
-- **Statistical aggregation**: Mean and standard deviation for all temporal features
-- **Data cleaning**: Robust handling of missing values and coordinate transformations
+- Compute relevant indices (NDVI, EVI) if required.
+- Aggregate time-series data into statistical summaries (mean, std).
+- Encode features into a model-friendly format.
 
-### 3. Machine Learning Model
-- **Architecture**: 1D Convolutional Neural Network (CNN)
-- **Input preprocessing**: StandardScaler normalization
-- **Model structure**:
-  - Conv1D layers (32, 64 filters)
-  - Dropout for regularization
-  - Dense layers with ReLU activation
-  - Softmax output for multi-class classification
+### 3. Model Training & Validation
+- Split data into **training (80%)** and **testing (20%)**.
+- Train models such as **Random Forest** and **XGBoost**.
+- Use **GridSearchCV** for hyperparameter tuning.
+- Evaluate performance using **accuracy**, **precision**, **recall**, and **F1-score**.
 
-### 4. Training Strategy
-- **Data splitting**: Stratified train-validation split (80/20)
-- **Callbacks**: Model checkpointing and early stopping
-- **Optimization**: Adam optimizer with categorical crossentropy loss
-- **Evaluation**: Accuracy metrics and confusion matrix analysis
+### 4. Model Export
+- Save trained model as `model.pkl` using `joblib`.
+- Store any preprocessing transformers if needed.
 
-## Project Structure
+### 5. App Development (Streamlit)
+- Build `app.py` to:
+  - Load `random_forest_cropland.pkl`.
+  - Accept user inputs (coordinates or uploaded data).
+  - Display predictions and classification results.
+- Example snippet:
+  ```python
+  st.title("GeoAI Cropland Classifier")
+  user_input = st.file_uploader("Upload your data file", type=["csv"])
+  if user_input:
+      data = pd.read_csv(user_input)
+      prediction = model.predict(data)
+      st.write("Prediction:", prediction)
 
+## Requirements
 ```
-├── data/
-│   ├── Sentinel1.csv
-│   ├── Sentinel2.csv
-│   ├── Train/
-│   │   ├── Fergana_training_samples.shp
-│   │   └── Orenburg_training_samples.shp
-│   └── Test.csv
-├── models/
-│   └── random_forest_cropland.pkl
-├── outputs/
-│   └── submission.csv
-└── geoai-cropland.ipynb
+streamlit
+numpy
+pandas
+scikit-learn
+imbalanced-learn
+category-encoders
+scipy
+joblib
+Pillow
+chardet
+requests
 ```
+Push repository to GitHub.
+
+Deploy on Streamlit Cloud by linking repo and selecting `app.py.`
 
 ## Usage
 
-### 1. Data Loading and Preprocessing
-```python
-# Load satellite data
-s1 = pd.read_csv("Sentinel1.csv").drop(columns=['date'])
-s2 = pd.read_csv("Sentinel2.csv").drop(columns=['date'])
+1. Clone this repo:
+  ```
+  git clone <repo-url>
+  ```
+2. Install dependencies:
+  ```
+  pip install -r requirements.txt
+  ```
+3. streamlit run app.py
+  ```
+  streamlit run app.py
+  ```
 
-# Load training labels
-train_gdf = load_training_data()
-```
-
-### 2. Feature Engineering
-```python
-# Calculate vegetation indices
-s2 = calculate_vegetation_indices(s2)
-
-# Aggregate temporal features
-s2_agg = aggregate_features(s2)
-s1_agg = aggregate_features(s1)
-```
-
-### 3. Model Training
-```python
-# Build and compile CNN model
-model = Sequential([
-    Input(shape=(features, 1)),
-    Conv1D(32, kernel_size=3, activation='relu'),
-    Dropout(0.2),
-    Conv1D(64, kernel_size=3, activation='relu'),
-    Flatten(),
-    Dense(64, activation='relu'),
-    Dense(num_classes, activation='softmax')
-])
-
-# Train with callbacks
-model.fit(X_train, y_train, validation_data=(X_val, y_val), callbacks=[checkpoint])
-```
-
-### 4. Prediction and Evaluation
-```python
-# Generate predictions
-test_preds = model.predict(X_test_cnn)
-predicted_labels = np.argmax(test_preds, axis=1)
-
-# Save submission
-submission = pd.DataFrame({'ID': test_df['ID'], 'label': predicted_labels})
-submission.to_csv('submission.csv', index=False)
-```
-
-## Key Implementation Details
-
-### Coordinate System Handling
-- Automatic detection and conversion of UTM coordinates to WGS84
-- Support for multiple UTM zones (Fergana: EPSG:32642, Orenburg: EPSG:32640)
-- Spatial matching with configurable distance threshold (0.5 degrees)
-
-### Feature Engineering Pipeline
-- Temporal aggregation using robust statistical measures
-- Vegetation index calculation for enhanced crop detection
-- Handling of missing values and data type conversions
-- Feature scaling and normalization for neural network training
-
-### Model Architecture
-- 1D CNN designed for multi-temporal satellite data
-- Dropout regularization to prevent overfitting
-- Model checkpointing to save best performing weights
-- Categorical output for multi-class land cover classification
-
-## Results and Visualization
-
-The project includes comprehensive visualization and analysis:
-- Training/validation accuracy and loss curves
-- Confusion matrix for model evaluation
-- Predicted label distribution analysis
-- Feature importance and data quality checks
-
-## Applications
-
-- **Agricultural monitoring**: Automated cropland mapping
-- **Land use planning**: Regional agricultural assessment
-- **Food security**: Crop area estimation and monitoring
-- **Environmental studies**: Land cover change detection
-- **Remote sensing research**: Multi-sensor data fusion techniques
-
-## Technical Requirements
-
-- Python 3.7+
-- TensorFlow/Keras for deep learning
-- GeoPandas for geospatial data processing
-- Scikit-learn for preprocessing and evaluation
-- Sufficient computational resources for CNN training
-
+👉 **Live Demo:** [https://geoai-cropland-classifier.streamlit.app/](https://geoai-cropland-classifier.streamlit.app/)
 
 ## Pitch Deck
  Please use the link below to access our pitch deck:
