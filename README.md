@@ -1,6 +1,6 @@
 # GeoAI Challenge for Cropland Mapping - Dry Dataset
 
-A comprehensive machine learning project for cropland classification using satellite imagery from Sentinel-1 and Sentinel-2 satellites. This project implements a CNN-based approach for mapping agricultural land in dry/arid regions using geospatial data from Fergana and Orenburg regions.
+A comprehensive machine learning project for cropland classification using satellite imagery from Sentinel-1 and Sentinel-2 satellites. This project implements a RF-based approach for mapping agricultural land in dry/arid regions using geospatial data from Fergana and Orenburg regions.
 
 ## Project Overview
 
