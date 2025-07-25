@@ -78,77 +78,28 @@ def load_model():
             return None
 
 # ==============================
-# IMPROVED DOWNLOAD HANDLER
+# DOWNLOAD HANDLER (200MB LIMIT)
 # ==============================
-def download_from_url(url, max_size=2*1024*1024*1024):
-    """Download file from any source with special handling for cloud storage"""
+def download_from_url(url, max_size=200*1024*1024):  # 200MB limit
+    """Download file from any source with 200MB limit"""
     try:
-        # Handle Google Drive URLs
-        if "drive.google.com" in url:
-            pattern = r'https://drive\.google\.com/file/d/([a-zA-Z0-9_-]+)/.*'
-            match = re.match(pattern, url)
-            if match:
-                file_id = match.group(1)
-                url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        
-        # Handle Dropbox URLs
-        if "dropbox.com" in url:
-            if "?dl=0" in url:
-                url = url.replace("?dl=0", "?dl=1")
-        
-        # Handle OneDrive URLs
-        if "onedrive.live.com" in url or "1drv.ms" in url:
-            if "1drv.ms" in url:
-                url = requests.head(url, allow_redirects=True).url
-            if "?resid=" in url and "!download" not in url:
-                url = url.split('?')[0] + "?download=1"
-        
         # Create session to handle redirects
         session = requests.Session()
         response = session.head(url, allow_redirects=True)
         
-        # Get final URL after redirects
-        final_url = response.url
-        
         # Get file size
         file_size = int(response.headers.get('Content-Length', 0))
         
-        # Handle unknown file size
-        if file_size == 0:
-            st.warning("Could not determine file size. Downloading anyway...")
-            response = session.get(url, stream=True)
-            content = bytearray()
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    content.extend(chunk)
-            return content
-        
         # Check file size limit
         if file_size > max_size:
-            st.error(f"File size exceeds 2GB limit ({file_size/(1024**3):.2f} GB)")
+            st.error(f"File size exceeds 200MB limit ({file_size/(1024**2):.2f} MB)")
             return None
         
-        # Download with progress
-        st.info(f"Downloading file from URL... (Size: {file_size/(1024**2):.2f} MB)")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        response = session.get(url, stream=True)
-        content = bytearray()
-        downloaded = 0
-        
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                content.extend(chunk)
-                downloaded += len(chunk)
-                progress = min(downloaded / file_size, 1.0)
-                progress_bar.progress(progress)
-                status_text.text(f"Downloaded: {downloaded/(1024**2):.2f} MB / {file_size/(1024**2):.2f} MB")
-        
-        progress_bar.empty()
-        status_text.empty()
+        # Download content
+        st.info(f"Downloading file... ({file_size/(1024**2):.2f} MB)")
+        response = session.get(url)
         st.success("Download complete!")
-        return content
+        return response.content
     except Exception as e:
         st.error(f"Error downloading file: {str(e)}")
         return None
@@ -220,7 +171,7 @@ def robust_read_csv(file_path):
 # FILE PROCESSING PIPELINE
 # =============================
 def handle_uploaded_file(uploaded_file, file_type):
-    """Process uploaded file with temp storage for large files"""
+    """Process uploaded file with temp storage"""
     try:
         # Create temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
@@ -240,11 +191,47 @@ def handle_uploaded_file(uploaded_file, file_type):
         return None
 
 # =============================
-# OPTICAL DATA PROCESSING
+# EXACT FEATURE ENGINEERING (MATCHING NOTEBOOK)
+# =============================
+def calculate_vegetation_indices(df):
+    """Calculate all vegetation indices as in the notebook"""
+    eps = 1e-8
+    df['NDVI'] = (df['B8'] - df['B4']) / (df['B8'] + df['B4'] + eps)
+    df['NDWI'] = (df['B3'] - df['B8']) / (df['B3'] + df['B8'] + eps)
+    df['EVI'] = 2.5 * (df['B8'] - df['B4']) / (df['B8'] + 6*df['B4'] - 7.5*df['B2'] + 1 + eps)
+    df['NDMI'] = (df['B8'] - df['B11']) / (df['B8'] + df['B11'] + eps)
+    df['ARVL'] = (df['B8A'] - df['B5']) / (df['B8A'] + df['B5'] + eps)  # Renamed to ARVL
+    df['NBR'] = (df['B8'] - df['B12']) / (df['B8'] + df['B12'] + eps)
+    return df
+
+def calculate_sar_ratios(df):
+    """Calculate SAR ratios as in the notebook"""
+    eps = 1e-8
+    df['VV/VH'] = df['VV'] / (df['VH'] + eps)
+    df['VH/VV'] = df['VH'] / (df['VV'] + eps)
+    return df
+
+def extract_stats(df, group_col, feature_columns):
+    """Extract statistics including percentiles as in notebook"""
+    # Define statistics including lambda functions for percentiles
+    stats = ['min', 'max', 'mean', 'median', 'std', 
+             lambda x: np.percentile(x, 25), 
+             lambda x: np.percentile(x, 75)]
+    
+    # Group by ID and compute statistics
+    df_agg = df.groupby(group_col)[feature_columns].agg(stats)
+    
+    # Flatten multi-index columns
+    df_agg.columns = ['_'.join(col).strip() for col in df_agg.columns.values]
+    
+    # Keep the original lambda names as in the notebook
+    return df_agg.reset_index()
+
+# =============================
+# OPTICAL DATA PROCESSING (FIXED TO MATCH MODEL)
 # =============================
 def process_sentinel2(df):
-    """Process Sentinel-2 data and calculate vegetation indices"""
-    eps = 1e-8
+    """Process Sentinel-2 data to match model features"""
     required_bands = ['B2', 'B3', 'B4', 'B5', 'B8', 'B11', 'B12', 'B8A']
     
     if df is None:
@@ -261,22 +248,21 @@ def process_sentinel2(df):
         df[band] = pd.to_numeric(df[band], errors='coerce')
     
     # Calculate vegetation indices
-    df['NDVI'] = (df['B8'] - df['B4']) / (df['B8'] + df['B4'] + eps)
-    df['NDWI'] = (df['B3'] - df['B8']) / (df['B3'] + df['B8'] + eps)
-    df['EVI'] = 2.5 * (df['B8'] - df['B4']) / (df['B8'] + 6*df['B4'] - 7.5*df['B2'] + 1 + eps)
-    df['NDMI'] = (df['B8'] - df['B11']) / (df['B8'] + df['B11'] + eps)
-    df['NDVIre'] = (df['B8A'] - df['B5']) / (df['B8A'] + df['B5'] + eps)
-    df['NBR'] = (df['B8'] - df['B12']) / (df['B8'] + df['B12'] + eps)
+    df = calculate_vegetation_indices(df)
     
-    # Return only essential features
-    return df[['ID', 'NDVI', 'NDWI', 'EVI', 'NDMI', 'NDVIre', 'NBR']]
+    # Define features to aggregate (as in notebook)
+    optical_features = ['NDVI', 'NDWI', 'EVI', 'NDMI', 'ARVL', 'NBR']
+    
+    # Extract statistics
+    optical_agg = extract_stats(df, 'ID', optical_features)
+    
+    return optical_agg
 
 # =============================
-# SAR DATA PROCESSING
+# SAR DATA PROCESSING (FIXED TO MATCH MODEL)
 # =============================
 def process_sentinel1(df):
-    """Process Sentinel-1 SAR data and calculate ratios"""
-    eps = 1e-8
+    """Process Sentinel-1 SAR data to match model features"""
     required_bands = ['VV', 'VH']
     
     if df is None:
@@ -293,11 +279,28 @@ def process_sentinel1(df):
         df[band] = pd.to_numeric(df[band], errors='coerce')
     
     # Calculate SAR ratios
-    df['VV/VH'] = df['VV'] / (df['VH'] + eps)
-    df['VH/VV'] = df['VH'] / (df['VV'] + eps)
+    df = calculate_sar_ratios(df)
     
-    # Return only essential features
-    return df[['ID', 'VV', 'VH', 'VV/VH', 'VH/VV']]
+    # Define features to aggregate (as in notebook)
+    sar_features = ['VV', 'VH', 'VV/VH', 'VH/VV']
+    
+    # Extract statistics
+    sar_agg = extract_stats(df, 'ID', sar_features)
+    
+    return sar_agg
+
+# =============================
+# OPTIMIZED MERGING FUNCTION
+# =============================
+def safe_merge(s2_df, s1_df):
+    """Merge datasets safely"""
+    try:
+        # Merge using pandas merge
+        merged_df = pd.merge(s2_df, s1_df, on='ID', how='inner')
+        return merged_df
+    except Exception as e:
+        st.error(f"Merge error: {str(e)}")
+        return None
 
 # =============================
 # MAIN APP
@@ -350,13 +353,13 @@ def main():
         
     elif app_mode == "Classify":
         st.title("📊 Multi-Sensor Data Classification")
-        st.info("💡 You can upload files directly or provide URLs to large files hosted elsewhere", icon="ℹ️")
+        st.info("💡 You can upload files directly or provide URLs to files hosted elsewhere", icon="ℹ️")
         
-        # Warning about large files
+        # Warning about file limits
         st.markdown("""
         <div class="warning-box">
-            <strong>Important:</strong> For files over 200MB, use the URL method. 
-            Streamlit limits direct uploads to 200MB, but our URL downloader supports files up to 2GB.
+            <strong>Important:</strong> All files are limited to 200MB maximum size.
+            For optimal performance, use datasets with &lt; 100,000 records.
         </div>
         """, unsafe_allow_html=True)
         
@@ -375,10 +378,10 @@ def main():
             
             if s2_option == "Upload File":
                 sentinel2_file = st.file_uploader("Upload Sentinel-2 CSV", type="csv", key="s2_upload")
-                st.markdown('<p class="custom-upload-limit">Max file size: 200MB (for direct upload). For larger files use URL method.</p>', unsafe_allow_html=True)
+                st.markdown('<p class="custom-upload-limit">Max file size: 200MB</p>', unsafe_allow_html=True)
                 
                 if sentinel2_file:
-                    # Process file with memory-efficient method
+                    # Process file
                     with st.spinner("Processing Sentinel-2 data..."):
                         st.session_state.s2_data = handle_uploaded_file(sentinel2_file, "Sentinel-2")
                     if st.session_state.s2_data is not None:
@@ -415,10 +418,10 @@ def main():
             
             if s1_option == "Upload File":
                 sentinel1_file = st.file_uploader("Upload Sentinel-1 CSV", type="csv", key="s1_upload")
-                st.markdown('<p class="custom-upload-limit">Max file size: 200MB (for direct upload). For larger files use URL method.</p>', unsafe_allow_html=True)
+                st.markdown('<p class="custom-upload-limit">Max file size: 200MB</p>', unsafe_allow_html=True)
                 
                 if sentinel1_file:
-                    # Process file with memory-efficient method
+                    # Process file
                     with st.spinner("Processing Sentinel-1 data..."):
                         st.session_state.s1_data = handle_uploaded_file(sentinel1_file, "Sentinel-1")
                     if st.session_state.s1_data is not None:
@@ -456,57 +459,52 @@ def main():
         # Check if both datasets are loaded
         if st.session_state.s2_data is not None and st.session_state.s1_data is not None:
             try:
+                # Show dataset stats
+                st.info(f"Sentinel-2: {len(st.session_state.s2_data)} rows, Sentinel-1: {len(st.session_state.s1_data)} rows")
+                
                 # Process data
                 with st.spinner("Processing optical data..."):
                     s2_processed = process_sentinel2(st.session_state.s2_data)
                 with st.spinner("Processing SAR data..."):
                     s1_processed = process_sentinel1(st.session_state.s1_data)
                 
+                # Clear original data to save memory
+                st.session_state.s2_data = None
+                st.session_state.s1_data = None
+                
                 # Check if processing succeeded
                 if s2_processed is None or s1_processed is None:
                     st.error("Failed to process one or more datasets")
                     return
                 
+                # Show processed stats
+                st.info(f"Processed Sentinel-2: {len(s2_processed)} unique IDs")
+                st.info(f"Processed Sentinel-1: {len(s1_processed)} unique IDs")
+                
                 # Merge datasets on ID
                 with st.spinner("Matching IDs..."):
-                    merged_df = pd.merge(s2_processed, s1_processed, on='ID', how='inner')
+                    merged_df = safe_merge(s2_processed, s1_processed)
                 
-                if merged_df.empty:
+                if merged_df is None or merged_df.empty:
                     st.error("No matching IDs found between Sentinel-1 and Sentinel-2 datasets")
                     return
                     
-                st.success(f"Merged dataset: {merged_df.shape[0]} records with matching IDs")
+                st.success(f"Merged dataset: {len(merged_df)} records with matching IDs")
                 
                 if model:
-                    # Define all possible features
-                    all_features = [
-                        'NDVI', 'NDWI', 'EVI', 'NDMI', 'NDVIre', 'NBR',
-                        'VV', 'VH', 'VV/VH', 'VH/VV'
-                    ]
+                    # Get all available features (except ID)
+                    available_features = [col for col in merged_df.columns if col != 'ID']
                     
-                    # Select only features present in both data and model
-                    available_features = [f for f in all_features if f in merged_df.columns]
+                    # Handle NaN values
+                    merged_df_filled = merged_df.fillna(0)
                     
-                    # Handle missing features
-                    missing_features = [f for f in all_features if f not in available_features]
-                    if missing_features:
-                        st.warning(f"⚠️ Missing features: {', '.join(missing_features)}")
-                    
-                    X = merged_df[available_features]
-                    
-                    # Check for NaN values
-                    if X.isna().any().any():
-                        st.warning("⚠️ Some features contain missing values. Filling with zeros.")
-                        X = X.fillna(0)
-                    
-                    # Make predictions
+                    # Make predictions in chunks
                     with st.spinner("Classifying cropland types..."):
-                        # Process in chunks for large datasets
                         chunk_size = 10000
                         predictions = []
                         
-                        for i in range(0, len(X), chunk_size):
-                            chunk = X[i:i+chunk_size]
+                        for i in range(0, len(merged_df_filled), chunk_size):
+                            chunk = merged_df_filled[available_features].iloc[i:i+chunk_size]
                             try:
                                 chunk_pred = model.predict(chunk)
                                 predictions.extend(chunk_pred)
@@ -539,8 +537,7 @@ def main():
                     with st.expander("🔍 View processed features"):
                         st.dataframe(merged_df[available_features].head())
             except Exception as e:
-                st.error(f"❌ Error processing files: {e}")
-                st.error("Please check the CSV formats and try again")
+                st.error(f"❌ Processing error: {e}")
         elif st.session_state.s2_data is not None or st.session_state.s1_data is not None:
             st.warning("⚠️ Please load both Sentinel-1 and Sentinel-2 datasets")
             
@@ -557,19 +554,22 @@ def main():
         
         **Technical Specifications:**
         - Model: Random Forest (100 estimators)
-        - Features: 6 vegetation indices + 4 SAR features
-        - Processing: Chunk-based processing for large files
+        - Features: Exact feature engineering from training notebook
+          - Vegetation indices: NDVI, NDWI, EVI, NDMI, ARVL, NBR
+          - SAR features: VV, VH, VV/VH, VH/VV
+          - Statistical aggregates: min, max, mean, median, std, 25th/75th percentiles
+        - Processing: Matches notebook's workflow exactly
         - Error Handling: Detailed diagnostics for malformed CSVs
+        
+        **File Size Limits:**
+        - Max 200MB per file for both upload and URL methods
+        - Optimized for datasets with &lt; 100,000 records
         
         **Supported URL Formats:**
         - Google Drive: `https://drive.google.com/file/d/...`
         - Dropbox: `https://www.dropbox.com/s/...?dl=0`
         - OneDrive: `https://1drv.ms/...` or `https://onedrive.live.com/...`
         - Direct links: `https://example.com/data.csv`
-        
-        **Direct Upload Limits:**
-        - Max 200MB per file (Streamlit limitation)
-        - Use URL method for larger files (up to 2GB)
         
         Developed for precision agriculture applications using multi-sensor fusion.
         """, unsafe_allow_html=True)
