@@ -200,7 +200,7 @@ def calculate_vegetation_indices(df):
     df['NDWI'] = (df['B3'] - df['B8']) / (df['B3'] + df['B8'] + eps)
     df['EVI'] = 2.5 * (df['B8'] - df['B4']) / (df['B8'] + 6*df['B4'] - 7.5*df['B2'] + 1 + eps)
     df['NDMI'] = (df['B8'] - df['B11']) / (df['B8'] + df['B11'] + eps)
-    df['ARVL'] = (df['B8A'] - df['B5']) / (df['B8A'] + df['B5'] + eps)  # Renamed to ARVL
+    df['ARVL'] = (df['B8A'] - df['B5']) / (df['B8A'] + df['B5'] + eps)
     df['NBR'] = (df['B8'] - df['B12']) / (df['B8'] + df['B12'] + eps)
     return df
 
@@ -221,10 +221,13 @@ def extract_stats(df, group_col, feature_columns):
     # Group by ID and compute statistics
     df_agg = df.groupby(group_col)[feature_columns].agg(stats)
     
-    # Flatten multi-index columns
-    df_agg.columns = ['_'.join(col).strip() for col in df_agg.columns.values]
+    # Flatten multi-index columns EXACTLY as in notebook
+    df_agg.columns = [f'{col[0]}_{col[1]}' for col in df_agg.columns]
     
-    # Keep the original lambda names as in the notebook
+    # Replace lambda names with notebook's exact format
+    df_agg.columns = [col.replace('_<lambda_0>', '_25percentile') for col in df_agg.columns]
+    df_agg.columns = [col.replace('_<lambda_1>', '_75percentile') for col in df_agg.columns]
+    
     return df_agg.reset_index()
 
 # =============================
@@ -303,7 +306,7 @@ def safe_merge(s2_df, s1_df):
         return None
 
 # =============================
-# MAIN APP
+# MAIN APP WITH FIXED SESSION STATE
 # =============================
 def main():
     # Sidebar with accessibility fix
@@ -366,11 +369,15 @@ def main():
         # Create two columns for separate uploaders
         col1, col2 = st.columns(2)
         
-        # Initialize session state
-        if 's2_data' not in st.session_state:
-            st.session_state.s2_data = None
-        if 's1_data' not in st.session_state:
-            st.session_state.s1_data = None
+        # Initialize session state for file uploaders
+        if 's2_uploaded' not in st.session_state:
+            st.session_state.s2_uploaded = None
+        if 's1_uploaded' not in st.session_state:
+            st.session_state.s1_uploaded = None
+        if 's2_processed' not in st.session_state:
+            st.session_state.s2_processed = None
+        if 's1_processed' not in st.session_state:
+            st.session_state.s1_processed = None
         
         with col1:
             st.subheader("Sentinel-2 Data (Optical)")
@@ -381,11 +388,18 @@ def main():
                 st.markdown('<p class="custom-upload-limit">Max file size: 200MB</p>', unsafe_allow_html=True)
                 
                 if sentinel2_file:
-                    # Process file
-                    with st.spinner("Processing Sentinel-2 data..."):
-                        st.session_state.s2_data = handle_uploaded_file(sentinel2_file, "Sentinel-2")
-                    if st.session_state.s2_data is not None:
-                        st.success(f"Loaded {len(st.session_state.s2_data)} rows")
+                    # Only process if it's a new file
+                    if st.session_state.s2_uploaded != sentinel2_file.name:
+                        with st.spinner("Processing Sentinel-2 data..."):
+                            df = handle_uploaded_file(sentinel2_file, "Sentinel-2")
+                            if df is not None:
+                                st.session_state.s2_uploaded = sentinel2_file.name
+                                st.session_state.s2_processed = process_sentinel2(df)
+                                st.success(f"Loaded {len(df)} rows from file: {sentinel2_file.name}")
+                    else:
+                        st.success(f"Using previously loaded file: {sentinel2_file.name}")
+                elif st.session_state.s2_uploaded:
+                    st.info(f"Previously loaded file: {st.session_state.s2_uploaded}")
             else:
                 s2_url = st.text_input("Enter URL for Sentinel-2 CSV:", key="s2_url", 
                                       placeholder="https://drive.google.com/... or https://dropbox.com/...")
@@ -401,9 +415,11 @@ def main():
                                     tmp_file_path = tmp_file.name
                                 
                                 # Process with robust reader
-                                st.session_state.s2_data = robust_read_csv(tmp_file_path)
-                                if st.session_state.s2_data is not None:
-                                    st.success(f"Loaded {len(st.session_state.s2_data)} rows from URL")
+                                df = robust_read_csv(tmp_file_path)
+                                if df is not None:
+                                    st.session_state.s2_uploaded = s2_url
+                                    st.session_state.s2_processed = process_sentinel2(df)
+                                    st.success(f"Loaded {len(df)} rows from URL")
                                 
                                 # Clean up temp file
                                 os.unlink(tmp_file_path)
@@ -421,11 +437,18 @@ def main():
                 st.markdown('<p class="custom-upload-limit">Max file size: 200MB</p>', unsafe_allow_html=True)
                 
                 if sentinel1_file:
-                    # Process file
-                    with st.spinner("Processing Sentinel-1 data..."):
-                        st.session_state.s1_data = handle_uploaded_file(sentinel1_file, "Sentinel-1")
-                    if st.session_state.s1_data is not None:
-                        st.success(f"Loaded {len(st.session_state.s1_data)} rows")
+                    # Only process if it's a new file
+                    if st.session_state.s1_uploaded != sentinel1_file.name:
+                        with st.spinner("Processing Sentinel-1 data..."):
+                            df = handle_uploaded_file(sentinel1_file, "Sentinel-1")
+                            if df is not None:
+                                st.session_state.s1_uploaded = sentinel1_file.name
+                                st.session_state.s1_processed = process_sentinel1(df)
+                                st.success(f"Loaded {len(df)} rows from file: {sentinel1_file.name}")
+                    else:
+                        st.success(f"Using previously loaded file: {sentinel1_file.name}")
+                elif st.session_state.s1_uploaded:
+                    st.info(f"Previously loaded file: {st.session_state.s1_uploaded}")
             else:
                 s1_url = st.text_input("Enter URL for Sentinel-1 CSV:", key="s1_url", 
                                       placeholder="https://drive.google.com/... or https://dropbox.com/...")
@@ -441,9 +464,11 @@ def main():
                                     tmp_file_path = tmp_file.name
                                 
                                 # Process with robust reader
-                                st.session_state.s1_data = robust_read_csv(tmp_file_path)
-                                if st.session_state.s1_data is not None:
-                                    st.success(f"Loaded {len(st.session_state.s1_data)} rows from URL")
+                                df = robust_read_csv(tmp_file_path)
+                                if df is not None:
+                                    st.session_state.s1_uploaded = s1_url
+                                    st.session_state.s1_processed = process_sentinel1(df)
+                                    st.success(f"Loaded {len(df)} rows from URL")
                                 
                                 # Clean up temp file
                                 os.unlink(tmp_file_path)
@@ -456,34 +481,24 @@ def main():
         st.divider()
         st.subheader("Classification")
         
-        # Check if both datasets are loaded
-        if st.session_state.s2_data is not None and st.session_state.s1_data is not None:
+        # Add reset button
+        if st.button("Clear All Data"):
+            st.session_state.s2_uploaded = None
+            st.session_state.s1_uploaded = None
+            st.session_state.s2_processed = None
+            st.session_state.s1_processed = None
+            st.experimental_rerun()
+        
+        # Check if both datasets are processed
+        if st.session_state.s2_processed is not None and st.session_state.s1_processed is not None:
             try:
-                # Show dataset stats
-                st.info(f"Sentinel-2: {len(st.session_state.s2_data)} rows, Sentinel-1: {len(st.session_state.s1_data)} rows")
-                
-                # Process data
-                with st.spinner("Processing optical data..."):
-                    s2_processed = process_sentinel2(st.session_state.s2_data)
-                with st.spinner("Processing SAR data..."):
-                    s1_processed = process_sentinel1(st.session_state.s1_data)
-                
-                # Clear original data to save memory
-                st.session_state.s2_data = None
-                st.session_state.s1_data = None
-                
-                # Check if processing succeeded
-                if s2_processed is None or s1_processed is None:
-                    st.error("Failed to process one or more datasets")
-                    return
-                
                 # Show processed stats
-                st.info(f"Processed Sentinel-2: {len(s2_processed)} unique IDs")
-                st.info(f"Processed Sentinel-1: {len(s1_processed)} unique IDs")
+                st.info(f"Processed Sentinel-2: {len(st.session_state.s2_processed)} unique IDs")
+                st.info(f"Processed Sentinel-1: {len(st.session_state.s1_processed)} unique IDs")
                 
                 # Merge datasets on ID
                 with st.spinner("Matching IDs..."):
-                    merged_df = safe_merge(s2_processed, s1_processed)
+                    merged_df = safe_merge(st.session_state.s2_processed, st.session_state.s1_processed)
                 
                 if merged_df is None or merged_df.empty:
                     st.error("No matching IDs found between Sentinel-1 and Sentinel-2 datasets")
@@ -509,7 +524,11 @@ def main():
                                 chunk_pred = model.predict(chunk)
                                 predictions.extend(chunk_pred)
                             except Exception as e:
+                                # Enhanced error reporting
                                 st.error(f"Prediction error: {e}")
+                                if hasattr(model, 'feature_names_in_'):
+                                    st.error(f"Model expects features: {list(model.feature_names_in_)}")
+                                st.error(f"We provided features: {available_features}")
                                 return
                         
                         merged_df['Predicted_Class'] = predictions
@@ -538,7 +557,7 @@ def main():
                         st.dataframe(merged_df[available_features].head())
             except Exception as e:
                 st.error(f"❌ Processing error: {e}")
-        elif st.session_state.s2_data is not None or st.session_state.s1_data is not None:
+        elif st.session_state.s2_processed is not None or st.session_state.s1_processed is not None:
             st.warning("⚠️ Please load both Sentinel-1 and Sentinel-2 datasets")
             
     elif app_mode == "About":
