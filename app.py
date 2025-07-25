@@ -322,7 +322,7 @@ def main():
         st.markdown("""
         <div style="background-color:#e8f5e9;padding:20px;border-radius:10px">
             <h2 style="color:#2e7d32">🌱 Satellite-based Agricultural Analysis</h2>
-            <p>Upload Sentinel-1 and Sentinel-2 data or provide direct URLs to classify cropland types</p>
+            <p style="color:#2e7d32">Upload Sentinel-1 and Sentinel-2 data or provide direct URLs to classify cropland types</p>
         </div>
         <br>
         """, unsafe_allow_html=True)
@@ -360,7 +360,7 @@ def main():
         
         # Warning about file limits
         st.markdown("""
-        <div class="warning-box">
+        <div class="warning-box" style="color:#2e7d32">
             <strong>Important:</strong> All files are limited to 200MB maximum size.
             For optimal performance, use datasets with &lt; 100,000 records.
         </div>
