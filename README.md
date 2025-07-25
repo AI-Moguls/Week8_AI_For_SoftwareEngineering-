@@ -62,12 +62,12 @@ This project aims to classify satellite imagery pixels as **cropland** or **non-
 
 ### 3. Model Training & Validation
 - Split data into **training (80%)** and **testing (20%)**.
-- Train models such as **Random Forest** and **XGBoost**.
+- Train model -> **Random Forest**
 - Use **GridSearchCV** for hyperparameter tuning.
-- Evaluate performance using **accuracy**, **precision**, **recall**, and **F1-score**.
+- Evaluate performance using **accuracy**.
 
 ### 4. Model Export
-- Save trained model as `model.pkl` using `joblib`.
+- Save trained model as `random_forest_cropland.pkl` using `joblib`.
 - Store any preprocessing transformers if needed.
 
 ### 5. App Development (Streamlit)
@@ -81,7 +81,7 @@ This project aims to classify satellite imagery pixels as **cropland** or **non-
   user_input = st.file_uploader("Upload your data file", type=["csv"])
   if user_input:
       data = pd.read_csv(user_input)
-      prediction = model.predict(data)
+      prediction = rf_model.predict(data)
       st.write("Prediction:", prediction)
 
 ## Requirements
