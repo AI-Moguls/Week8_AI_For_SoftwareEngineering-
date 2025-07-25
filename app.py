@@ -196,25 +196,30 @@ def handle_uploaded_file(uploaded_file, file_type):
 def calculate_vegetation_indices(df):
     """Calculate all vegetation indices as in the notebook"""
     eps = 1e-8
+    # Optical indices
     df['NDVI'] = (df['B8'] - df['B4']) / (df['B8'] + df['B4'] + eps)
-    df['NDWI'] = (df['B3'] - df['B8']) / (df['B3'] + df['B8'] + eps)
     df['EVI'] = 2.5 * (df['B8'] - df['B4']) / (df['B8'] + 6*df['B4'] - 7.5*df['B2'] + 1 + eps)
+    df['NDWI'] = (df['B3'] - df['B8']) / (df['B3'] + df['B8'] + eps)
+    df['ARVI'] = (df['B8'] - (2*df['B4'] - df['B2'])) / (df['B8'] + (2*df['B4'] - df['B2']) + eps)
     df['NDMI'] = (df['B8'] - df['B11']) / (df['B8'] + df['B11'] + eps)
-    df['ARVL'] = (df['B8A'] - df['B5']) / (df['B8A'] + df['B5'] + eps)
+    df['MSAVI'] = (2*df['B8'] + 1 - np.sqrt((2*df['B8']+1)**2 - 8*(df['B8']-df['B4']))) / 2
+    df['NDPI'] = (df['B11'] - df['B4']) / (df['B11'] + df['B4'] + eps)
+    df['NDVIre'] = (df['B8A'] - df['B5']) / (df['B8A'] + df['B5'] + eps)
     df['NBR'] = (df['B8'] - df['B12']) / (df['B8'] + df['B12'] + eps)
     return df
 
-def calculate_sar_ratios(df):
-    """Calculate SAR ratios as in the notebook"""
+def calculate_sar_indices(df):
+    """Calculate SAR indices as in the notebook"""
     eps = 1e-8
-    df['VV/VH'] = df['VV'] / (df['VH'] + eps)
-    df['VH/VV'] = df['VH'] / (df['VV'] + eps)
+    df['VV/VH_ratio'] = df['VV'] / (df['VH'] + eps)
+    df['VH/VV_ratio'] = df['VH'] / (df['VV'] + eps)
+    df['RVI'] = (4 * df['VH']) / (df['VV'] + df['VH'] + eps)
     return df
 
 def extract_stats(df, group_col, feature_columns):
-    """Extract statistics including percentiles as in notebook"""
+    """Extract statistics including percentiles and skew as in notebook"""
     # Define statistics including lambda functions for percentiles
-    stats = ['min', 'max', 'mean', 'median', 'std', 
+    stats = ['min', 'max', 'mean', 'median', 'std', 'skew', 
              lambda x: np.percentile(x, 25), 
              lambda x: np.percentile(x, 75)]
     
@@ -235,26 +240,37 @@ def extract_stats(df, group_col, feature_columns):
 # =============================
 def process_sentinel2(df):
     """Process Sentinel-2 data to match model features"""
-    required_bands = ['B2', 'B3', 'B4', 'B5', 'B8', 'B11', 'B12', 'B8A']
+    # Include all bands and metadata from notebook
+    required_bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']
+    metadata = ['rel_orbit', 'solar_azimuth', 'solar_zenith', 'cloud_pct', 
+                'translated_lat', 'translated_lon']
     
     if df is None:
         return None
     
-    # Check for required bands
+    # Check for required bands and metadata
     missing_bands = [band for band in required_bands if band not in df.columns]
+    missing_meta = [m for m in metadata if m not in df.columns]
+    
     if missing_bands:
         st.error(f"Missing required Sentinel-2 bands: {', '.join(missing_bands)}")
         return None
-        
+    if missing_meta:
+        st.warning(f"Missing metadata columns: {', '.join(missing_meta)}. Using default values.")
+        for m in missing_meta:
+            df[m] = 0  # Fill missing metadata with defaults
+            
     # Convert to numeric
-    for band in required_bands:
-        df[band] = pd.to_numeric(df[band], errors='coerce')
+    for col in required_bands + metadata:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # Calculate vegetation indices
     df = calculate_vegetation_indices(df)
     
-    # Define features to aggregate (as in notebook)
-    optical_features = ['NDVI', 'NDWI', 'EVI', 'NDMI', 'ARVL', 'NBR']
+    # Define features to aggregate (bands + indices + metadata)
+    optical_features = required_bands + [
+        'NDVI', 'EVI', 'NDWI', 'ARVI', 'NDMI', 'MSAVI', 'NDPI', 'NDVIre', 'NBR'
+    ] + metadata
     
     # Extract statistics
     optical_agg = extract_stats(df, 'ID', optical_features)
@@ -281,11 +297,11 @@ def process_sentinel1(df):
     for band in required_bands:
         df[band] = pd.to_numeric(df[band], errors='coerce')
     
-    # Calculate SAR ratios
-    df = calculate_sar_ratios(df)
+    # Calculate SAR indices
+    df = calculate_sar_indices(df)
     
-    # Define features to aggregate (as in notebook)
-    sar_features = ['VV', 'VH', 'VV/VH', 'VH/VV']
+    # Define features to aggregate
+    sar_features = ['VV', 'VH', 'VV/VH_ratio', 'VH/VV_ratio', 'RVI']
     
     # Extract statistics
     sar_agg = extract_stats(df, 'ID', sar_features)
@@ -340,7 +356,7 @@ def main():
         3. View predictions and download results
         
         #### Required CSV columns:
-        - **Sentinel-2**: ID, B2, B3, B4, B5, B8, B11, B12, B8A
+        - **Sentinel-2**: ID, B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12, rel_orbit, solar_azimuth, solar_zenith, cloud_pct, translated_lat, translated_lon
         - **Sentinel-1**: ID, VV, VH
         
         #### Supported URL Sources:
@@ -513,13 +529,25 @@ def main():
                     # Handle NaN values
                     merged_df_filled = merged_df.fillna(0)
                     
+                    # Ensure we have all features expected by the model
+                    if hasattr(model, 'feature_names_in_'):
+                        required_features = model.feature_names_in_
+                        # Add missing features with default value 0
+                        missing_features = set(required_features) - set(merged_df_filled.columns)
+                        for feature in missing_features:
+                            merged_df_filled[feature] = 0
+                        # Reorder columns to match model's expected feature order
+                        X = merged_df_filled[required_features]
+                    else:
+                        X = merged_df_filled[available_features]
+                    
                     # Make predictions in chunks
                     with st.spinner("Classifying cropland types..."):
                         chunk_size = 10000
                         predictions = []
                         
-                        for i in range(0, len(merged_df_filled), chunk_size):
-                            chunk = merged_df_filled[available_features].iloc[i:i+chunk_size]
+                        for i in range(0, len(X), chunk_size):
+                            chunk = X.iloc[i:i+chunk_size]
                             try:
                                 chunk_pred = model.predict(chunk)
                                 predictions.extend(chunk_pred)
@@ -528,7 +556,7 @@ def main():
                                 st.error(f"Prediction error: {e}")
                                 if hasattr(model, 'feature_names_in_'):
                                     st.error(f"Model expects features: {list(model.feature_names_in_)}")
-                                st.error(f"We provided features: {available_features}")
+                                st.error(f"We provided features: {list(X.columns)}")
                                 return
                         
                         merged_df['Predicted_Class'] = predictions
@@ -574,9 +602,11 @@ def main():
         **Technical Specifications:**
         - Model: Random Forest (100 estimators)
         - Features: Exact feature engineering from training notebook
-          - Vegetation indices: NDVI, NDWI, EVI, NDMI, ARVL, NBR
-          - SAR features: VV, VH, VV/VH, VH/VV
-          - Statistical aggregates: min, max, mean, median, std, 25th/75th percentiles
+          - Optical bands: B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12
+          - Vegetation indices: NDVI, EVI, NDWI, ARVI, NDMI, MSAVI, NDPI, NDVIre, NBR
+          - SAR features: VV, VH, VV/VH_ratio, VH/VV_ratio, RVI
+          - Metadata: rel_orbit, solar_azimuth, solar_zenith, cloud_pct, translated_lat, translated_lon
+          - Statistical aggregates: min, max, mean, median, std, skew, 25th/75th percentiles
         - Processing: Matches notebook's workflow exactly
         - Error Handling: Detailed diagnostics for malformed CSVs
         
