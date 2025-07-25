@@ -27,7 +27,7 @@ st.markdown("""
 /* Style for our custom message */
 .custom-upload-limit {
     font-size: 0.8rem;
-    color: #6c757d;
+    color: #0E1117;
     margin-top: -15px;
     margin-bottom: 10px;
     text-align: center;
